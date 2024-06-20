@@ -31,11 +31,19 @@ This is the official implementation of PartCLIPSeg.
 
 PartCLIPSeg is a framework designed to enhance open-vocabulary part segmentation by integrating generalized parts with object-level contexts and attention controls, improving the model's ability to generalize and segment fine-grained parts accurately.
 
+<!--
 <div align="center">
-    <img src="assets/part_clipseg_overall_architecture.png" alt="drawing" height="200em"/>
+    <img src="assets/part_clipseg_overall_architecture.png" alt="drawing" height="180em"/>
     &nbsp;
-    <img src="assets/part_clipseg_teaser.png" alt="drawing" height="200em"/>
+    <img src="assets/part_clipseg_teaser.png" alt="drawing" height="180em"/>
 </div>
+-->
+
+| Overall Architecture | Overview |
+| :---: | :---: |
+| ![snapshot_generation](./assets/part_clipseg_overall_architecture.png) | ![model_overview](./assets/part_clipseg_teaser.png)  |
+
+
 
 ### Updates
 
