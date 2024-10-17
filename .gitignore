@@ -181,6 +181,8 @@ weights/*
 
 # configs
 configs/*
+!configs/zero_shot
+configs/zero_shot/*
 !configs/zero_shot/clipseg_voc_oracle.yaml
 !configs/zero_shot/clipseg_voc_pred_all.yaml
 !configs/zero_shot/partclipseg_ade_oracle.yaml

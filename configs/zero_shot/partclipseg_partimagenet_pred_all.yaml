@@ -1,0 +1,39 @@
+ORACLE: False
+SEED: 12345678
+MODEL:
+  META_ARCHITECTURE: "PartCLIPSeg"
+  PARTCLIPSEG:
+    OBJ_LAMBDA: 1.0
+    PART_LAMBDA: 1.0
+    USE_ATTENTION: True
+    ATTN_SEP_LAMBDA: 0.1
+    ATTN_ENH_LAMBDA: 0.01
+    ATTN_MASK_THRESHOLD: 0.3
+INPUT:
+  DATASET_MAPPER_NAME: "partimagenet"
+DATASETS:
+  TRAIN: ("partimagenet_obj_part_sem_seg_train",)
+  TEST: ("partimagenet_obj_part_sem_seg_val_obj_condition",)
+DATALOADER:
+  FILTER_EMPTY_ANNOTATIONS: True
+  NUM_WORKERS: 8
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.0001
+  MAX_ITER: 20000
+  WARMUP_FACTOR: 1.0
+  WARMUP_ITERS: 0
+  WEIGHT_DECAY: 0.0001
+  OPTIMIZER: "ADAMW"
+  LR_SCHEDULER_NAME: "WarmupPolyLR"
+  CHECKPOINT_PERIOD: 1000
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 0.01
+    NORM_TYPE: 2.0
+TEST:
+  EVAL_PERIOD: 1000
+  VISUALIZE: True
+  VISUALIZE_ATTN: False
+OUTPUT_DIR: "output/partclipseg_partimagenet_pred_all"
