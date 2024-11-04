@@ -1,12 +1,12 @@
-ORACLE: False
+ORACLE: True
 SEED: 12345678
 MODEL:
   META_ARCHITECTURE: "CLIPSeg"
 INPUT:
   DATASET_MAPPER_NAME: "obj_part_semantic"
 DATASETS:
-  TRAIN: ("voc_obj_part_sem_seg_train",)
-  TEST: ("voc_obj_part_sem_seg_val_obj_condition",)
+  TRAIN: ("ade_obj_part_sem_seg_train",)
+  TEST: ("ade_obj_part_sem_seg_val_obj_condition",)
 DATALOADER:
   FILTER_EMPTY_ANNOTATIONS: True
   NUM_WORKERS: 8
@@ -29,4 +29,4 @@ TEST:
   EVAL_PERIOD: 1000
   VISUALIZE: True
   VISUALIZE_ATTN: False
-OUTPUT_DIR: "output/clipseg_voc_pred_all"
+OUTPUT_DIR: "output/clipseg_ade_oracle"

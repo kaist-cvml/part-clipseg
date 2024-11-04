@@ -44,7 +44,6 @@ from baselines.data import (
     build_detection_train_loader,
 )
 from baselines.evaluation import (
-    GeneralizedSemSegEvaluator,
     CLIPSegEvaluator,
     PartCLIPSegEvaluator,
 )
@@ -78,10 +77,9 @@ class Trainer(DefaultTrainer):
         evaluator_list = []
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
         if evaluator_type in ["sem_seg", "ade20k_panoptic_seg"]:
-            if not cfg.TEST.VISUALIZE and hasattr(cfg.TEST, "VISUALIZE"):
-                evaluator = GeneralizedSemSegEvaluator
-            else:
-                evaluator = evaluator_classes.get(cfg.MODEL.META_ARCHITECTURE, GeneralizedSemSegEvaluator)
+
+            evaluator = evaluator_classes[cfg.MODEL.META_ARCHITECTURE]
+
             evaluator_list.append(
                 evaluator(
                     dataset_name,
@@ -289,7 +287,6 @@ def setup(args):
     add_mask_former_config(cfg)
     cfg.set_new_allowed(True)
 
-    # 'configs/zero_shot/partclipseg_voc.yaml'
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()

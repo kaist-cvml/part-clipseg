@@ -51,7 +51,7 @@ PartCLIPSeg is a framework designed to enhance open-vocabulary part segmentation
 
 - [x] [2024.10.10] 👨‍💻 The official codes have been released!
 - [x] [2024.09.26] 🎉 Our paper has been accepted to [NeurIPS 2024](https://neurips.cc)!
-- [x] [2024.07.17] 📄 Our paper is now available! You can find the paper [here](https://arxiv.org/abs/2407.11394).
+- [x] [2024.07.17] 📄 Our paper is now available! You can find the paper [here](https://arxiv.org/abs/2406.11384).
 
 
 

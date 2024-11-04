@@ -1,3 +1,5 @@
+
+
 # Copyright (c) Facebook, Inc. and its affiliates.
 import itertools
 import json
@@ -40,13 +42,14 @@ from baselines.utils.vis_uitls import show_image_relevance
 
 import cv2
 _CV2_IMPORTED = True
+
 # try:
 #     import cv2  # noqa
 # except ImportError:
 #     # OpenCV is an optional dependency at the moment
 #     _CV2_IMPORTED = False
 
-# TODO:
+
 json_index_counter = 0
 
 
@@ -89,43 +92,17 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
         self.visualize = visualize
         self.visualize_attn = visualize_attn
 
+        if self._output_dir:
+            PathManager.mkdirs(self._output_dir)
+
         if self.visualize:
             self.vis_path = os.path.join(self._output_dir, "visualization")
             PathManager.mkdirs(self.vis_path)
 
         self.meta = meta
 
-        # for dataset's statistics
-        self.obj_class_num = defaultdict(int)
-        self.part_class_num = defaultdict(int)
-        self.obj_part_class_num = defaultdict(int)
-        self.total_num = 0
-
-        self.obj_class_ratio_sum = dict()
-        self.part_class_ratio_sum = dict()
-        self.part_class_ratio_in_obj_sum = dict()
-        self.obj_part_class_ratio_sum = dict()
-        self.obj_part_class_ratio_in_obj_sum = dict()
-
-        for obj_part_class in meta.stuff_classes:
-            # check if obj_part_clas is a key in obj_part_class_ratio
-            if obj_part_class not in self.obj_part_class_ratio_sum:
-                self.obj_part_class_ratio_sum[obj_part_class] = 0
-                self.obj_part_class_ratio_in_obj_sum[obj_part_class] = 0
-
-        for obj_class in meta.obj_classes:
-            # check if obj_class is a key in obj_class_ratio
-            if obj_class not in self.obj_class_ratio_sum:
-                self.obj_class_ratio_sum[obj_class] = 0
-
-        for part_class in meta.part_classes:
-            # check if part_class is a key in part_class_ratio
-            if part_class not in self.part_class_ratio_sum:
-                self.part_class_ratio_sum[part_class] = 0
-                self.part_class_ratio_in_obj_sum[part_class] = 0
-
         # This is because cv2.erode did not work for int datatype. Only works for uint8.
-        self._compute_boundary_iou = True # True
+        self._compute_boundary_iou = True  # True
         if not _CV2_IMPORTED:
             self._compute_boundary_iou = False
             self._logger.warn(
@@ -140,7 +117,6 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                 for num_classes for calculating Boundary IoU is {np.iinfo(np.uint8).max}.
                 The number of classes of dataset {self._dataset_name} is {self._num_classes}"""
             )
-
 
     def reset(self):
         super().reset()
@@ -165,9 +141,10 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
             for input, output in zip(inputs, outputs):
                 if self.visualize_attn:
                     attns = output["attns"]
-                obj_mask = input["instances"].gt_masks[0]
 
-                sem_seg_output, sem_seg_output_all = output["sem_seg"], output["sem_seg_with_bg"]
+                obj_mask = input["instances"].gt_masks[0]
+                sem_seg_output = output["sem_seg"]
+                sem_seg_output_all = output["sem_seg_with_bg"]
                 obj_sem_seg_output_all = output["obj_sem_seg_with_bg"]
                 part_sem_seg_output = output["part_sem_seg"]
 
@@ -181,27 +158,17 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                 obj_output_all = obj_output_all.to(self._cpu_device)
                 part_output = part_output.argmax(dim=0).to(self._cpu_device)
 
-                obj_mask = F.interpolate(obj_mask.float().unsqueeze(0).unsqueeze(0), size=output.shape[-2:], mode='nearest').squeeze()
-                output[obj_mask == 0.0] = self.meta.ignore_label
-
-                pred = np.array(output, dtype=np.int)
-                pred_all = np.array(output_all, dtype=np.int)
-                obj_pred_all = np.array(obj_output_all, dtype=np.int)
-                part_pred = np.array(part_output, dtype=np.int)
+                obj_mask = F.interpolate(
+                    obj_mask.float().unsqueeze(0).unsqueeze(0),
+                    size=output.shape[-2:],
+                    mode='nearest'
+                ).squeeze()
 
                 gt_classes = input["obj_part_instances"].gt_classes
                 gt_masks = input["obj_part_instances"].gt_masks
-                eval_image_size = pred.shape[-2:]
+                eval_image_size = tuple(output.shape[-2:])
 
-                # for dataset's statistics
-                gt_size = eval_image_size[0] * eval_image_size[1]
-                # category_id = input["category_id"]
-                category_id = input['sem_seg'].unique()[0]
-                mapped_category_id = self.meta.obj_map[category_id] if "val" not in self.meta.name else category_id
-                obj_class_name = self.meta.obj_classes[mapped_category_id]
-                self.obj_class_ratio_sum[obj_class_name] += (obj_mask.nonzero().shape[0] / gt_size)
-                self.obj_class_num[obj_class_name] += 1
-
+                # GT: Union of Part GT
                 if len(gt_masks) == 0:
                     gt = np.zeros_like(pred) + self._ignore_label
                 else:
@@ -209,33 +176,31 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                     for i in range(len(gt_classes)):
                         gt[gt_masks[i] == True] = gt_classes[i]
 
-                        # for dataset's statistics
-                        gt_mask = F.interpolate(
-                            gt_masks[i].clone().detach().float().unsqueeze(0).unsqueeze(0),
-                            size=eval_image_size,
-                            mode='nearest'
-                        ).squeeze().squeeze()
-
-                        gt_region = gt_mask.nonzero().shape[0]
-                        gt_class_name = self.meta.stuff_classes[gt_classes[i]]
-                        self.obj_part_class_ratio_sum[gt_class_name] += (gt_region / gt_size)
-                        self.obj_part_class_ratio_in_obj_sum[gt_class_name] += (gt_region / obj_mask.nonzero().shape[0])
-                        self.obj_part_class_num[gt_class_name] += 1
-
-                        part_class_name = gt_class_name.split("'s")[1].strip()
-                        self.part_class_ratio_sum[part_class_name] += (gt_region / gt_size)
-                        self.part_class_ratio_in_obj_sum[part_class_name] += (gt_region / obj_mask.nonzero().shape[0])
-                        self.part_class_num[part_class_name] += 1
-
-                    # eval_image_size = pred.shape[-2:]
                     gt = F.interpolate(
                         torch.tensor(gt).unsqueeze(0).unsqueeze(0),
                         size=eval_image_size,
                         mode='nearest'
                     ).squeeze()
                     gt = gt.int().numpy()
+
+
+                # output    : Visualization for Oracle-Obj
+                # output_all: Visualization for Pred-All
+                # pred      : Evaluation for Oracle-Obj
+                # pred_all  : Evaluation for Pred-All
+
+                # For visualization
+                output[gt == self._ignore_label] = self.meta.ignore_label
+                # (not) output_all[gt == self._ignore_label] = self.meta.ignore_label
+
+                # For evaluation (To evaluate only the part GT labels)
+                pred = np.array(output, dtype=np.int)
                 pred[pred == self._ignore_label] = self._num_classes
+                pred_all = np.array(output_all, dtype=np.int)
+                pred_all[pred_all == self._ignore_label] = self._num_classes
+                pred_all[(gt == self._ignore_label)] = self._num_classes
                 gt[gt == self._ignore_label] = self._num_classes
+
                 self._conf_matrix += np.bincount(
                     (self._num_classes + 1) * pred.reshape(-1) + gt.reshape(-1)
                     if self.oracle
@@ -244,17 +209,27 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                 ).reshape(self._conf_matrix.shape)
 
                 if self._compute_boundary_iou:
-                    b_gt = self._mask_to_boundary(gt.astype(np.uint8)).astype(np.int64)
-                    b_pred = self._mask_to_boundary(pred.astype(np.uint8) if self.oracle else pred_all.astype(np.uint8)).astype(np.int64)
+                    b_gt = self._mask_to_boundary(
+                        gt.astype(np.uint8)
+                    ).astype(np.int64)
+                    b_pred = self._mask_to_boundary(
+                        pred.astype(np.uint8)
+                        if self.oracle
+                        else pred_all.astype(np.uint8)
+                    ).astype(np.int64)
 
                     self._b_conf_matrix += np.bincount(
-                        (self._num_classes + 1) * b_pred.reshape(-1) + b_gt.reshape(-1),
+                        (self._num_classes + 1) *
+                        b_pred.reshape(-1) + b_gt.reshape(-1),
                         minlength=self._conf_matrix.size,
                     ).reshape(self._conf_matrix.shape)
 
-                self._predictions.extend(self.encode_json_sem_seg(
-                    pred if self.oracle else pred_all, input["file_name"]))
-                
+                # Save File
+                self._predictions.extend(
+                    self.encode_json_sem_seg(
+                        pred if self.oracle else pred_all, input["file_name"]
+                    )
+                )
 
                 if self.visualize:
                     ext = os.path.splitext(input["file_name"])[1]
@@ -279,7 +254,15 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
 
                             attn_npy = show_image_relevance(attn_tensor, input_img_pil)
                             attn_img = Image.fromarray(attn_npy)
-                            attn_img.save(os.path.join(self.vis_path, os.path.basename(input["file_name"]).replace(ext, f"_relevance_{tag}.jpg")))
+                            attn_img.save(
+                                os.path.join(
+                                    self.vis_path,
+                                    os.path.basename(input["file_name"]).replace(ext, f"_relevance_{tag}.jpg")
+                                )
+                            )
+
+                    obj_pred_all = np.array(obj_output_all, dtype=np.int)
+                    part_pred = np.array(part_output, dtype=np.int)
 
                     obj_pred_all_pil = Image.fromarray(obj_pred_all.astype(np.uint8)).convert('P')
                     obj_pred_all_pil.putpalette([v for color in self.meta.obj_colors for v in color])
@@ -302,7 +285,7 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                     vis_pred = visualizer_pred.draw_sem_seg(pred)
                     vis_pred.save(os.path.join(self.vis_path, os.path.basename(input["file_name"])))
 
-                    vis_pred_all = visualizer_pred_all.draw_sem_seg(pred_all)
+                    vis_pred_all = visualizer_pred_all.draw_sem_seg(np.array(output_all, dtype=np.int))
                     vis_pred_all.save(os.path.join(self.vis_path, os.path.basename(input["file_name"]).replace(ext, "_all.jpg")))
 
                     vis_obj_pred_all = visualizer_obj_pred_all.draw_obj_sem_seg(obj_pred_all)
@@ -314,25 +297,9 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                     vis_gt = visualizer_gt.draw_sem_seg(gt)
                     vis_gt.save(os.path.join(self.vis_path, os.path.basename(input["file_name"]).replace(ext, "_gt.jpg")))
 
-            # for dataset's statistics
-            self.total_num += 1
-
-            if self._output_dir:
-                PathManager.mkdirs(self._output_dir)
-                with PathManager.open(os.path.join(self._output_dir, "statistics.json"), "w") as f:
-                    json.dump({
-                        "obj_class_num": self.obj_class_num,
-                        "part_class_num": self.part_class_num,
-                        "obj_part_class_num": self.obj_part_class_num,
-                        "total_num": self.total_num,
-                        "obj_class_ratio_sum": self.obj_class_ratio_sum,
-                        "part_class_ratio_sum": self.part_class_ratio_sum,
-                        "obj_part_class_ratio_sum": self.obj_part_class_ratio_sum,
-                        "obj_part_class_ratio_in_obj_sum": self.obj_part_class_ratio_in_obj_sum
-                    }, f)
-
             torch.cuda.empty_cache()
             gc.collect()
+
 
     def evaluate(self):
         """
@@ -360,44 +327,57 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
             for b_conf_matrix in b_conf_matrix_list:
                 self._b_conf_matrix += b_conf_matrix
 
-        # TODO: epoch
-        # if self._output_dir:
-        #     PathManager.mkdirs(self._output_dir)
-        #     global json_index_counter
-        #     json_index_counter += 1
-        #     file_path = os.path.join(self._output_dir, f"sem_seg_predictions_{json_index_counter:04d}.json")
-        #     # file_path = os.path.join(self._output_dir, f"sem_seg_predictions.json")
-        #     with PathManager.open(file_path, "w") as f:
-        #         f.write(json.dumps(self._predictions))
+        # -------------------------------------------------------------
+        # Pred-All vs. Oracle-Obj
+        # -------------------------------------------------------------
+        # The difference is the presence of GT object-level label.
 
-        acc = np.full(self._num_classes, np.nan, dtype=np.float)
-        iou = np.full(self._num_classes, np.nan, dtype=np.float)
-        recall = np.full(self._num_classes, np.nan, dtype=np.float)
-        tp = self._conf_matrix.diagonal()[:-1].astype(np.float)
-        # tp = self._conf_matrix.diagonal().astype(np.float)
-        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float)
-        # pos_gt = np.sum(self._conf_matrix, axis=0).astype(np.float)
+        #  +---  GT  ---+
+        #  |    (FN)    |   (TN)
+        #  |   +--------+-- Pred --+
+        #  |   |  (TP)  |          |
+        #  +---+--------+   (FP)   |
+        #      +-------------------+
+
+        # mIoU = TP / (TP + FP + FN)
+        # mACC = TP / (TP + FP)
+        # recall = TP / (TP + FN)
+
+        acc = np.full(self._num_classes, np.nan, dtype=np.float) if self.oracle else np.full(self._num_classes + 1, np.nan, dtype=np.float)
+        iou = np.full(self._num_classes, np.nan, dtype=np.float) if self.oracle else np.full(self._num_classes + 1, np.nan, dtype=np.float)
+        recall = np.full(self._num_classes, np.nan, dtype=np.float) if self.oracle else np.full(self._num_classes + 1, np.nan, dtype=np.float)
+
+        if not self.oracle:
+            # Without GT background
+            self._conf_matrix[:, -1] = 0
+
+        tp = self._conf_matrix.diagonal()[:-1].astype(np.float) if self.oracle else self._conf_matrix.diagonal().astype(np.float)
+        pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float) if self.oracle else np.sum(self._conf_matrix, axis=0).astype(np.float)
+        recall_valid = pos_gt > 0
+        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float) if self.oracle else np.sum(self._conf_matrix, axis=1).astype(np.float)
         class_weights = pos_gt / np.sum(pos_gt)
-        pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float)
-        # pos_pred = np.sum(self._conf_matrix, axis=1).astype(np.float)
-        acc_valid = pos_gt > 0
-        acc[acc_valid] = tp[acc_valid] / pos_gt[acc_valid]
-        iou_valid = (pos_gt + pos_pred) > 0
+        acc[recall_valid] = tp[recall_valid] / pos_gt[recall_valid]
         union = pos_gt + pos_pred - tp
-        iou[acc_valid] = tp[acc_valid] / union[acc_valid]
-        macc = np.sum(acc[acc_valid]) / np.sum(acc_valid)
-        miou = np.sum(iou[acc_valid]) / np.sum(iou_valid)
-        fiou = np.sum(iou[acc_valid] * class_weights[acc_valid])
-        pacc = np.sum(tp) / np.sum(pos_gt)
+        iou_valid = (pos_gt + pos_pred) > 0
 
-        recall[acc_valid] = tp[acc_valid] / (tp[acc_valid] + (pos_gt[acc_valid] - tp[acc_valid]))
-        mRecall = np.sum(recall[acc_valid]) / np.sum(acc_valid)
+        if self.oracle:
+            iou[recall_valid] = tp[recall_valid] / union[recall_valid]
+        else:
+            iou[iou_valid] = tp[iou_valid] / union[iou_valid]
+        recall[recall_valid] = tp[recall_valid] / pos_gt[recall_valid]
+
+        macc = np.nanmean(acc)
+        miou = np.nanmean(iou)
+        fiou = np.nansum(iou * class_weights)
+        pacc = np.nansum(tp) / np.nansum(pos_gt)
+        mRecall = np.nanmean(recall)
 
         if self._compute_boundary_iou:
-            b_iou = np.full(self._num_classes, np.nan, dtype=np.float)
-            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float)
-            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float)
-            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float)
+
+            b_iou = np.full(self._num_classes, np.nan, dtype=np.float) if self.oracle else np.full(self._num_classes + 1, np.nan, dtype=np.float)
+            b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float) if self.oracle else self._b_conf_matrix.diagonal().astype(np.float)
+            b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float) if self.oracle else np.sum(self._b_conf_matrix, axis=0).astype(np.float)
+            b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float) if self.oracle else np.sum(self._b_conf_matrix, axis=1).astype(np.float)
             b_union = b_pos_gt + b_pos_pred - b_tp
             b_iou_valid = b_union > 0
             b_iou[b_iou_valid] = b_tp[b_iou_valid] / b_union[b_iou_valid]
@@ -413,7 +393,7 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
 
         for i, name in enumerate(self._class_names):
             res["ACC-{}".format(name)] = 100 * acc[i]
-            res["Recall-{}".format(name)] = 100 * recall[i] 
+            res["Recall-{}".format(name)] = 100 * recall[i]
             if self._compute_boundary_iou:
                 res[f"BoundaryIoU-{name}"] = 100 * b_iou[i]
 
@@ -423,35 +403,73 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
                 biou_list = []
                 recall_list = []
 
-                set_inds = np.array(set_inds, np.int)
-                mask = np.zeros((len(iou),)).astype(np.bool)
-                mask[set_inds] = 1
-                miou = np.sum(iou[mask][acc_valid[mask]]) / np.sum(iou_valid[mask])
-                mrecall = np.sum(recall[mask][acc_valid[mask]]) / np.sum(acc_valid[mask])
-                pacc = np.sum(tp[mask]) / np.sum(pos_gt[mask])
-                res["mIoU-{}".format(set_name)] = 100 * miou
-                res["pAcc-{}".format(set_name)] = 100 * pacc
-                res["mRecall-{}".format(set_name)] = 100 * mrecall
+                set_inds = np.array(set_inds, dtype=int)
+                mask = np.zeros(len(iou), dtype=bool)
+                mask[set_inds] = True
+
+                subset_iou_valid = recall_valid & mask if self.oracle else iou_valid & mask
+                subset_acc_valid = recall_valid & mask
+
+                if np.any(subset_iou_valid):
+                    miou = np.sum(iou[mask][recall_valid[mask]]) / np.sum(recall_valid[mask]) if not self.oracle else np.nanmean(iou[mask])
+                else:
+                    miou = np.nan
+
+                if np.any(subset_acc_valid):
+                    mrecall = np.nanmean(recall[subset_acc_valid])
+                else:
+                    mrecall = np.nan
+
+                if np.nansum(pos_gt[mask]) > 0:
+                    pacc = np.nansum(tp[mask]) / np.nansum(pos_gt[mask])
+                else:
+                    pacc = np.nan
+
+                res[f"mIoU-{set_name}"] = 100 * miou
+                res[f"pAcc-{set_name}"] = 100 * pacc
+                res[f"mRecall-{set_name}"] = 100 * mrecall
                 iou_list.append(miou)
                 recall_list.append(mrecall)
 
                 if self._compute_boundary_iou:
-                    b_miou = np.sum(b_iou[mask][b_iou_valid[mask]]) / np.sum(b_iou_valid[mask])
-                    res["Boundary-mIoU-{}".format(set_name)] = 100 * b_miou
+                    if np.any(mask):
+                        b_miou = np.nanmean(b_iou[mask])
+                    else:
+                        b_miou = np.nan
+                    res[f"Boundary-mIoU-{set_name}"] = 100 * b_miou
                     biou_list.append(b_miou)
 
-                miou = np.sum(iou[~mask][acc_valid[~mask]]) / np.sum(iou_valid[~mask])
-                pacc = np.sum(tp[~mask]) / np.sum(pos_gt[~mask])
-                mrecall = np.sum(recall[~mask][acc_valid[~mask]]) / np.sum(acc_valid[~mask])
-                res["mIoU-un{}".format(set_name)] = 100 * miou
-                res["pAcc-un{}".format(set_name)] = 100 * pacc
-                res["mRecall-un{}".format(set_name)] = 100 * mrecall
+                inv_mask = ~mask
+                subset_iou_valid = recall_valid & inv_mask if self.oracle else iou_valid & inv_mask
+                subset_acc_valid = recall_valid & inv_mask
+
+                if np.any(subset_iou_valid):
+                    miou = np.sum(iou[inv_mask][recall_valid[inv_mask]]) / np.sum(recall_valid[inv_mask]) if not self.oracle else np.nanmean(iou[inv_mask])
+                else:
+                    miou = np.nan
+
+                if np.any(subset_acc_valid):
+                    mrecall = np.nanmean(recall[subset_acc_valid])
+                else:
+                    mrecall = np.nan
+
+                if np.nansum(pos_gt[inv_mask]) > 0:
+                    pacc = np.nansum(tp[inv_mask]) / np.nansum(pos_gt[inv_mask])
+                else:
+                    pacc = np.nan
+
+                res[f"mIoU-un{set_name}"] = 100 * miou
+                res[f"pAcc-un{set_name}"] = 100 * pacc
+                res[f"mRecall-un{set_name}"] = 100 * mrecall
                 iou_list.append(miou)
                 recall_list.append(mrecall)
 
                 if self._compute_boundary_iou:
-                    b_miou = np.sum(b_iou[~mask][b_iou_valid[~mask]]) / np.sum(b_iou_valid[~mask])
-                    res["Boundary-mIoU-un{}".format(set_name)] = 100 * b_miou
+                    if np.any(inv_mask):
+                        b_miou = np.nanmean(b_iou[inv_mask])
+                    else:
+                        b_miou = np.nan
+                    res[f"Boundary-mIoU-un{set_name}"] = 100 * b_miou
                     biou_list.append(b_miou)
 
         res['h-IoU'] = 2 * (res['mIoU-base'] * res['mIoU-unbase']) / (res['mIoU-base'] + res['mIoU-unbase'])
@@ -466,127 +484,3 @@ class PartCLIPSegEvaluator(SemSegEvaluator):
         self._logger.info(results)
         return results
 
-
-    # def evaluate(self):
-    #     """
-    #     Evaluates standard semantic segmentation metrics (http://cocodataset.org/#stuff-eval):
-
-    #     * Mean intersection-over-union averaged across classes (mIoU)
-    #     * Frequency Weighted IoU (fwIoU)
-    #     * Mean pixel accuracy averaged across classes (mACC)
-    #     * Pixel Accuracy (pACC)
-    #     """
-    #     if self._distributed:
-    #         synchronize()
-    #         conf_matrix_list = all_gather(self._conf_matrix)
-    #         b_conf_matrix_list = all_gather(self._b_conf_matrix)
-    #         self._predictions = all_gather(self._predictions)
-    #         self._predictions = list(itertools.chain(*self._predictions))
-    #         if not is_main_process():
-    #             return
-
-    #         self._conf_matrix = np.zeros_like(self._conf_matrix)
-    #         for conf_matrix in conf_matrix_list:
-    #             self._conf_matrix += conf_matrix
-
-    #         self._b_conf_matrix = np.zeros_like(self._b_conf_matrix)
-    #         for b_conf_matrix in b_conf_matrix_list:
-    #             self._b_conf_matrix += b_conf_matrix
-
-    #     # TODO: epoch
-    #     if self._output_dir:
-    #         PathManager.mkdirs(self._output_dir)
-    #         global json_index_counter
-    #         json_index_counter += 1
-    #         file_path = os.path.join(self._output_dir, f"sem_seg_predictions_{json_index_counter:04d}.json")
-    #         # file_path = os.path.join(self._output_dir, f"sem_seg_predictions.json")
-    #         with PathManager.open(file_path, "w") as f:
-    #             f.write(json.dumps(self._predictions))
-
-    #     acc = np.full(self._num_classes, np.nan, dtype=np.float)
-    #     iou = np.full(self._num_classes, np.nan, dtype=np.float)
-    #     recall = np.full(self._num_classes, np.nan, dtype=np.float)
-    #     tp = self._conf_matrix.diagonal()[:-1].astype(np.float)
-    #     # tp = self._conf_matrix.diagonal().astype(np.float)
-    #     pos_gt = np.sum(self._conf_matrix[:-1, :-1], axis=0).astype(np.float)
-    #     # pos_gt = np.sum(self._conf_matrix, axis=0).astype(np.float)
-    #     class_weights = pos_gt / np.sum(pos_gt)
-    #     pos_pred = np.sum(self._conf_matrix[:-1, :-1], axis=1).astype(np.float)
-    #     # pos_pred = np.sum(self._conf_matrix, axis=1).astype(np.float)
-    #     acc_valid = pos_gt > 0
-    #     acc[acc_valid] = tp[acc_valid] / pos_gt[acc_valid]
-    #     iou_valid = (pos_gt + pos_pred) > 0
-    #     union = pos_gt + pos_pred - tp
-    #     iou[acc_valid] = tp[acc_valid] / union[acc_valid]
-    #     macc = np.sum(acc[acc_valid]) / np.sum(acc_valid)
-    #     miou = np.sum(iou[acc_valid]) / np.sum(iou_valid)
-    #     fiou = np.sum(iou[acc_valid] * class_weights[acc_valid])
-    #     pacc = np.sum(tp) / np.sum(pos_gt)
-
-    #     recall[acc_valid] = tp[acc_valid] / (tp[acc_valid] + (pos_gt[acc_valid] - tp[acc_valid]))
-    #     mRecall = np.sum(recall[acc_valid]) / np.sum(acc_valid)
-
-    #     if self._compute_boundary_iou:
-    #         b_iou = np.full(self._num_classes, np.nan, dtype=np.float)
-    #         b_tp = self._b_conf_matrix.diagonal()[:-1].astype(np.float)
-    #         b_pos_gt = np.sum(self._b_conf_matrix[:-1, :-1], axis=0).astype(np.float)
-    #         b_pos_pred = np.sum(self._b_conf_matrix[:-1, :-1], axis=1).astype(np.float)
-    #         b_union = b_pos_gt + b_pos_pred - b_tp
-    #         b_iou_valid = b_union > 0
-    #         b_iou[b_iou_valid] = b_tp[b_iou_valid] / b_union[b_iou_valid]
-
-    #     res = {}
-    #     res["mIoU"] = 100 * miou
-    #     res["fwIoU"] = 100 * fiou
-    #     for i, name in enumerate(self._class_names):
-    #         res["IoU-{}".format(name)] = 100 * iou[i]
-    #     res["mACC"] = 100 * macc
-    #     res["pACC"] = 100 * pacc
-    #     res["mRecall"] = 100 * mRecall
-
-    #     for i, name in enumerate(self._class_names):
-    #         res["ACC-{}".format(name)] = 100 * acc[i]
-    #         res["Recall-{}".format(name)] = 100 * recall[i] 
-    #         if self._compute_boundary_iou:
-    #             res[f"BoundaryIoU-{name}"] = 100 * b_iou[i]
-
-    #     if self._evaluation_set is not None:
-    #         for set_name, set_inds in self._evaluation_set.items():
-    #             iou_list = []
-    #             biou_list = []
-
-    #             set_inds = np.array(set_inds, np.int)
-    #             mask = np.zeros((len(iou),)).astype(np.bool)
-    #             mask[set_inds] = 1
-    #             miou = np.sum(iou[mask][acc_valid[mask]]) / np.sum(iou_valid[mask])
-    #             pacc = np.sum(tp[mask]) / np.sum(pos_gt[mask])
-    #             res["mIoU-{}".format(set_name)] = 100 * miou
-    #             res["pAcc-{}".format(set_name)] = 100 * pacc
-    #             iou_list.append(miou)
-
-    #             if self._compute_boundary_iou:
-    #                 b_miou = np.sum(b_iou[mask][b_iou_valid[mask]]) / np.sum(b_iou_valid[mask])
-    #                 res["Boundary-mIoU-{}".format(set_name)] = 100 * b_miou
-    #                 biou_list.append(b_miou)
-
-    #             miou = np.sum(iou[~mask][acc_valid[~mask]]) / np.sum(iou_valid[~mask])
-    #             pacc = np.sum(tp[~mask]) / np.sum(pos_gt[~mask])
-    #             res["mIoU-un{}".format(set_name)] = 100 * miou
-    #             res["pAcc-un{}".format(set_name)] = 100 * pacc
-    #             iou_list.append(miou)
-
-    #             if self._compute_boundary_iou:
-    #                 b_miou = np.sum(b_iou[~mask][b_iou_valid[~mask]]) / np.sum(b_iou_valid[~mask])
-    #                 res["Boundary-mIoU-un{}".format(set_name)] = 100 * b_miou
-    #                 biou_list.append(b_miou)
-
-    #     res['h-IoU'] = 2 * (res['mIoU-base'] * res['mIoU-unbase']) / (res['mIoU-base'] + res['mIoU-unbase'])
-    #     res['h-bIoU'] = 2 * (res['Boundary-mIoU-base'] * res['Boundary-mIoU-unbase']) / (res['Boundary-mIoU-base'] + res['Boundary-mIoU-unbase'])
-
-    #     if self._output_dir:
-    #         file_path = os.path.join(self._output_dir, "sem_seg_evaluation.pth")
-    #         with PathManager.open(file_path, "wb") as f:
-    #             torch.save(res, f)
-    #     results = OrderedDict({"sem_seg": res})
-    #     self._logger.info(results)
-    #     return results
