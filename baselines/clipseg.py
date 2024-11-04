@@ -14,9 +14,13 @@ class CLIPSeg(nn.Module):
     @configurable
     def __init__(self, train_dataset, test_dataset):
         super().__init__()
-        self.clipseg_processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
+        self.clipseg_processor = CLIPSegProcessor.from_pretrained(
+            "CIDAS/clipseg-rd64-refined"
+        )
         train_class_texts = MetadataCatalog.get(train_dataset).stuff_classes
-        self.train_class_texts = [c.replace('\'s', '') for c in train_class_texts]
+        self.train_class_texts = [
+            c.replace('\'s', '') for c in train_class_texts
+        ]
         self.train_obj_classes = MetadataCatalog.get(train_dataset).obj_classes
 
         self.test_class_texts = MetadataCatalog.get(test_dataset).stuff_classes
@@ -92,7 +96,7 @@ class CLIPSeg(nn.Module):
             )
             clipseg_preds = torch.sigmoid(upscaled_logits)
             preds = clipseg_preds.squeeze(0).cpu()
-            
+
             upscaled_logits_all = nn.functional.interpolate(
                 logits,
                 size=(image.size[1], image.size[0]),
@@ -110,7 +114,9 @@ class CLIPSeg(nn.Module):
                 if part.split('\'s')[0] == obj:
                     part_category_names.append(part.replace('\'s', ''))
                     part_inds.append(i)
-        no_part_ids = [i for i in range(len(self.test_class_texts)) if i not in part_inds]
+        no_part_ids = [
+            i for i in range(len(self.test_class_texts)) if i not in part_inds
+        ]
         preds[no_part_ids] = 0.0
 
         results = [{
@@ -126,17 +132,19 @@ class CLIPSeg(nn.Module):
     def forward(self, batched_inputs):
         if not self.training:
             return self.inference(batched_inputs)
-        # images = [Image.open(x["file_name"]).convert("RGB") for x in batched_inputs]
+
         images = [x["image"].to(self.device) for x in batched_inputs]
         gts = [x["obj_part_sem_seg"].to(self.device) for x in batched_inputs]
         outputs = self.clipseg_segmentation(
             self.clipseg_model, images, None, self.device
         )  # [b,n,h,w]
-        targets = torch.stack([nn.functional.interpolate(
-            gt.unsqueeze(0).unsqueeze(0).float(),
-            size=(outputs.shape[-2], outputs.shape[-1]),
-            mode="nearest"
-        ) for gt in gts]).long().squeeze(1).squeeze(1)  # [b,h,w]
+        targets = torch.stack([
+            nn.functional.interpolate(
+                gt.unsqueeze(0).unsqueeze(0).float(),
+                size=(outputs.shape[-2], outputs.shape[-1]),
+                mode="nearest"
+            ) for gt in gts
+        ]).long().squeeze(1).squeeze(1)  # [b,h,w]
 
         num_classes = outputs.shape[1]
         mask = targets != self.ignore_label  # [b,h,w]
@@ -149,6 +157,7 @@ class CLIPSeg(nn.Module):
         _targets[mask] = _onehot
 
         loss = F.binary_cross_entropy_with_logits(
-            outputs, _targets, weight=class_weight)
+            outputs, _targets, weight=class_weight
+        )
         losses = {"loss_sem_seg": loss}
         return losses

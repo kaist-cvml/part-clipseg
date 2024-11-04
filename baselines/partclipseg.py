@@ -17,9 +17,11 @@ from collections import defaultdict
 @META_ARCH_REGISTRY.register()
 class PartCLIPSeg(nn.Module):
     @configurable
-    def __init__(self, train_dataset, test_dataset, ORACLE, 
-                 use_attention, obj_lambda, part_lambda, 
-                 attn_mask_threshold, attn_sep_lambda, attn_enh_lambda, *kwargs):
+    def __init__(
+            self, train_dataset, test_dataset, ORACLE,
+            use_attention, obj_lambda, part_lambda,
+            attn_mask_threshold, attn_sep_lambda, attn_enh_lambda, *kwargs
+        ):
         super().__init__()
 
         self.device = "cuda"
@@ -27,12 +29,10 @@ class PartCLIPSeg(nn.Module):
         self.use_attention = use_attention
         self.obj_lambda = obj_lambda
         self.part_lambda = part_lambda
-        # self.segmentation_background_threshold = 0.0
 
         self.ignore_label = MetadataCatalog.get(test_dataset).ignore_label
         self.init_train_metadata(train_dataset)
         self.init_test_metadata(test_dataset)
-
         self.partclipseg_processor = PartCLIPSegProcessor.from_pretrained(
             "CIDAS/clipseg-rd64-refined"
         )
@@ -58,7 +58,7 @@ class PartCLIPSeg(nn.Module):
         )
 
         # ------------
-        # load weights
+        # Load Weights
         # ------------
         self.partclipseg_model.decoder.part_obj_with_cond_embed.load_state_dict(self.partclipseg_model.decoder.transposed_convolution.state_dict())
         self.partclipseg_model.decoder.cond_film_add.load_state_dict(self.partclipseg_model.decoder.film_add.state_dict())
@@ -72,12 +72,9 @@ class PartCLIPSeg(nn.Module):
             self.attn_mask_threshold = attn_mask_threshold
             self.attn_sep_lambda = attn_sep_lambda
             self.attn_enh_lambda = attn_enh_lambda
-            # self.lambda_attn_sep = kwargs["lambda_attn_sep"] if "lambda_attn_sep" in kwargs else 0.1
-            # self.lambda_attn_enh = kwargs["lambda_attn_enh"] if "lambda_attn_enh" in kwargs else 0.01
 
     @classmethod
     def from_config(cls, cfg):
-        # TODO: merge params
         ret = {}
         ret["train_dataset"] = cfg.DATASETS.TRAIN[0]
         ret['test_dataset'] = cfg.DATASETS.TEST[0]
@@ -102,8 +99,8 @@ class PartCLIPSeg(nn.Module):
 
         text                    : object-specific part category names
         part_classes            : generalized part category names
-
         '''
+
         train_text_classes = MetadataCatalog.get(train_dataset).stuff_classes
 
         # "bus's door" -> "bus door" / "bus" / "door"
@@ -137,6 +134,7 @@ class PartCLIPSeg(nn.Module):
         )
 
         # {0: 1, 1: 34, 2: 40, 3: 35, 4: 7, 5: 38, 6: 38, 7: 31, 8: 14, ...}
+        # e.g. dog's head, cat's head -> head
         self.train_class_to_part = {
             index: self.train_part_classes.index(
                 class_text.split('\'s')[1].strip()
@@ -167,8 +165,6 @@ class PartCLIPSeg(nn.Module):
         return None
 
     def init_test_metadata(self, test_dataset):
-        # TODO:
-        # consistency (style), sync with init_train_metadata()
 
         test_text_classes = MetadataCatalog.get(test_dataset).stuff_classes
 
@@ -230,35 +226,23 @@ class PartCLIPSeg(nn.Module):
 
         return None
 
-    """
-    def preds_to_semantic_inds(self, preds, threshold):
-        flat_preds = preds.reshape((preds.shape[0], -1))
-        # Initialize a dummy "unlabeled" mask with the threshold
-        flat_preds_with_treshold = torch.full(
-            (preds.shape[0] + 1, flat_preds.shape[-1]), threshold
-        )
-        flat_preds_with_treshold[1: preds.shape[0] + 1, :] = flat_preds
-
-        # Get the top mask index for each pixel
-        semantic_inds = torch.topk(flat_preds_with_treshold, 1, dim=0).indices.reshape(
-            (preds.shape[-2], preds.shape[-1])
-        )
-        return semantic_inds
-    """
 
     def partclipseg_segmentation(
         self, model, images, test_text,
         num_text_classes, num_part_classes, num_obj_classes,
         part_index_map, obj_index_map, device
     ):
+
         logits = []
         input = self.partclipseg_processor(
-            images=images, return_tensors="pt"
+            images=images,
+            return_tensors="pt"
         ).to(device)
+
         if self.training:
-            text = self.train_text_encoding
+            text = self.train_text_encoding  # (train) generalized part, object
         else:
-            text = test_text
+            text = test_text                 # (test) generalized part, object
 
         input["part_index_map"] = part_index_map
         input["obj_index_map"] = obj_index_map
@@ -271,8 +255,8 @@ class PartCLIPSeg(nn.Module):
         input["output_attentions"] = self.use_attention
 
         outputs = model(**input)
-        logits = outputs.logits
-        part_obj_logits = outputs.part_obj_logits
+        logits = outputs.logits                    # part, object, bg logits
+        part_obj_logits = outputs.part_obj_logits  # object-specific part, bg logits
 
         if self.use_attention:
             attentions = outputs.decoder_output.attentions
@@ -281,9 +265,9 @@ class PartCLIPSeg(nn.Module):
                 bs, attentions, num_text_classes, num_part_classes, num_obj_classes,
                 part_index_map, obj_index_map, device
             )
-            return (logits, part_obj_logits), agg_attentions
-
-        return logits, part_obj_logits
+            return logits, part_obj_logits, agg_attentions
+        else:
+            return logits, part_obj_logits, None
 
     def merge_attention(
         self, bs, attentions, num_text_classes, num_part_classes, num_obj_classes,
@@ -309,6 +293,7 @@ class PartCLIPSeg(nn.Module):
         return agg_attentions
 
     def inference(self, batched_inputs):
+
         image = Image.open(batched_inputs[0]["file_name"])
         image = image.convert("RGB")
 
@@ -335,51 +320,28 @@ class PartCLIPSeg(nn.Module):
                 self.device,
             )
 
-            if self.use_attention:
-                outputs, attentions = outputs
+            # logits             : generalized part, object, bg logits (41+11+1 = 53)
+            # part_obj_logits    : object-specific part, bg logits (74+1 = 75)
+            # part_logits        : generalized part logits (41)
+            # obj_with_bg_logits : object, bg logits (11+1 = 12)
 
-            logits, part_obj_logits = outputs
-
+            logits, part_obj_logits, attentions = outputs
             part_logits = logits[:, :num_part_classes]
-            obj_logits_with_bg = logits[:, num_part_classes:]
+            obj_with_bg_logits = logits[:, num_part_classes:]
 
+            # ----------
+            # Oracle-Obj
+            # ----------
             upscaled_logits = nn.functional.interpolate(
                 part_obj_logits[:, :-1, :, :],
                 size=(image.size[1], image.size[0]),
                 mode="bilinear",
             )
-
             clipseg_preds = torch.sigmoid(upscaled_logits)
             preds = clipseg_preds.squeeze(0)
 
-            upscaled_logits_with_bg = nn.functional.interpolate(
-                part_obj_logits,
-                size=(image.size[1], image.size[0]),
-                mode="bilinear",
-            )
-
-            clipseg_preds_with_bg = torch.sigmoid(upscaled_logits_with_bg)
-            preds_with_bg = clipseg_preds_with_bg.squeeze(0)
-
-            upscaled_part_logits = nn.functional.interpolate(
-                part_logits,
-                size=(image.size[1], image.size[0]),
-                mode="bilinear",
-            )
-
-            clipseg_part_preds = torch.sigmoid(upscaled_part_logits)
-            part_preds = clipseg_part_preds.squeeze(0)
-
-            upscaled_obj_logits_with_bg = nn.functional.interpolate(
-                obj_logits_with_bg,
-                size=(image.size[1], image.size[0]),
-                mode="bilinear",
-            )
-
-            clipseg_obj_preds_with_bg = torch.sigmoid(upscaled_obj_logits_with_bg)
-            obj_preds_with_bg = clipseg_obj_preds_with_bg.squeeze(0)
-
-            gt_objs = [
+            # Exclude parts not in GT object in Oracle-Obj setting
+            gt_objs = [  # (object-level mask GT)
                 self.test_obj_classes[i]
                 for i in torch.unique(batched_inputs[0]["sem_seg"]) if i != self.ignore_label
             ]
@@ -389,7 +351,39 @@ class PartCLIPSeg(nn.Module):
                     if part.split("\'s", maxsplit=1)[0] == obj:
                         part_inds.add(i)
             no_part_ids = [i for i in range(len(test_text_classes)) if i not in part_inds]
+            preds[no_part_ids] = 0.0
 
+            # ----------
+            # Pred-All
+            # ----------
+            upscaled_logits_with_bg = nn.functional.interpolate(
+                part_obj_logits,
+                size=(image.size[1], image.size[0]),
+                mode="bilinear",
+            )
+            clipseg_preds_with_bg = torch.sigmoid(upscaled_logits_with_bg)
+            preds_with_bg = clipseg_preds_with_bg.squeeze(0)
+
+
+            # --------------------
+            # For Visualization
+            # --------------------
+            upscaled_part_logits = nn.functional.interpolate(
+                part_logits,
+                size=(image.size[1], image.size[0]),
+                mode="bilinear",
+            )
+            clipseg_part_preds = torch.sigmoid(upscaled_part_logits)
+            part_preds = clipseg_part_preds.squeeze(0)
+
+            # For Visualization
+            upscaled_obj_logits_with_bg = nn.functional.interpolate(
+                obj_with_bg_logits,
+                size=(image.size[1], image.size[0]),
+                mode="bilinear",
+            )
+            clipseg_obj_preds_with_bg = torch.sigmoid(upscaled_obj_logits_with_bg)
+            obj_preds_with_bg = clipseg_obj_preds_with_bg.squeeze(0)
             obj_preds_ = obj_preds_with_bg.argmax(0)
             obj_preds_mask = F.one_hot(obj_preds_, num_classes=num_obj_classes + 1).float().permute(2, 0, 1)
 
@@ -399,36 +393,30 @@ class PartCLIPSeg(nn.Module):
                 self.test_text_to_obj_in_part_map[:, None, None].repeat(1, preds_with_bg.shape[1], preds_with_bg.shape[2])
             )
             preds_with_bg[-1] *= obj_preds_mask[-1]
-            # preds_with_bg[-1][obj_preds_mask[-1] == 1] = obj_preds_mask[-1][obj_preds_mask[-1] == 1]
-
             obj_preds_with_bg = self.test_obj_in_part_to_obj_map[obj_preds_]
-            preds[no_part_ids] = 0.0
 
             if self.use_attention:
                 bs, _, h, w = logits.shape
                 attns = self.get_attn_masks(bs, h, w, attentions, batched_inputs, num_text_classes, num_obj_classes)
 
         results = [{
-            "sem_seg": preds,
-            "sem_seg_with_bg": preds_with_bg,
-            "obj_sem_seg_with_bg": obj_preds_with_bg,
-            "part_sem_seg": part_preds,
-            "attns": attns if self.use_attention else None,
+            "sem_seg": preds,                                # Oracle-Obj
+            "sem_seg_with_bg": preds_with_bg,                # Pred-All
+            "obj_sem_seg_with_bg": obj_preds_with_bg,        # For Visualization
+            "part_sem_seg": part_preds,                      # For Visualization
+            "attns": attns if self.use_attention else None,  # For Visualization
         }]
 
         return results
 
 
-    # TODO: modulate forward and inference
-
     def forward(self, batched_inputs):
         if not self.training:
             return self.inference(batched_inputs)
 
-        # images = [Image.open(x["file_name"]).convert("RGB") for x in batched_inputs]
         images = [x["image"].to(self.device) for x in batched_inputs]
         gts = [x["obj_part_sem_seg"].to(self.device) for x in batched_inputs]
-        obj_gts = [x["sem_seg"].to(self.device) for x in batched_inputs]
+        obj_gts = [x["sem_seg"].to(self.device) for x in batched_inputs]  # object-level ground truth
 
         num_text_classes = len(self.train_text_classes)
         num_part_classes = len(self.train_part_classes)
@@ -443,12 +431,16 @@ class PartCLIPSeg(nn.Module):
             part_index_map, obj_index_map, self.device
         )  # [b, n, h, w]
 
-        if self.use_attention:
-            outputs, attentions = outputs
+        logits, part_obj_logits, attentions = outputs
 
-        logits, part_obj_logits = outputs
+
+        # part_obj_logits   : object-specific part, bg logits (74+1 = 75)
+        # logits            : generalized part, object, bg logits (41+11+1 = 53)
+
+        logits, part_obj_logits, _ = outputs
         bs, n, h, w = logits.shape
 
+        # object-specific part ground truth
         targets = torch.stack(
             [
                 nn.functional.interpolate(
@@ -459,6 +451,7 @@ class PartCLIPSeg(nn.Module):
             ]
         ).long().squeeze(1).squeeze(1)  # [b,h,w]
 
+        # object-level ground truth
         obj_targets = torch.stack(
             [
                 nn.functional.interpolate(
@@ -472,7 +465,6 @@ class PartCLIPSeg(nn.Module):
         part_targets = self.train_text_to_part_map[targets]
         obj_in_part_targets = self.train_obj_to_obj_in_part_map[obj_targets]
 
-        # logits = logits[:, :-1] # [b,n-1,h,w]
         num_classes = logits.shape[1]
         mask = targets != self.ignore_label                       # [b,h,w]
         part_mask = part_targets != self.ignore_label
@@ -487,50 +479,54 @@ class PartCLIPSeg(nn.Module):
 
         _targets[..., :num_part_classes][part_mask] = part_onehot
         _targets[..., num_part_classes:-1][obj_mask] = obj_onehot
-        _targets[..., -1][~obj_mask] = 1
+        _targets[..., -1][~obj_mask] = 1  # background (~ object-level mask)
         part_obj_targets[..., :num_text_classes][mask] = text_onehot
         part_obj_targets[..., -1][~obj_mask] = 1
 
-        # weights
+        # background weights
         class_weight = torch.ones(num_classes).to(self.device)
-        class_weight[-1] = 0.05
+        class_weight[-1] = 0.05  # generalized part + object + background
 
-
-        # TODO: param (args)
         results_weight = torch.ones(num_text_classes + 1).to(self.device)
-        results_weight[-1] = 0.05
+        results_weight[-1] = 0.05  # object-specific part + background
+
 
 
         # ---------------------------------------------------------------------
         # Generalized Parts with Object-level Contexts
         # ---------------------------------------------------------------------
-        #   - part_obj_loss : object-specific part
+        #   - part_obj_loss : object-specific part guidance
         #   - obj_loss      : object-level guidance
         #   - part_loss     : generalized part guidance
         # ---------------------------------------------------------------------
 
         part_obj_loss, part_loss, obj_loss = 0.0, 0.0, 0.0
+
         if part_mask.sum() > 0:
+            # object-specific part guidance
             part_obj_loss = F.binary_cross_entropy_with_logits(
                 part_obj_logits[part_mask],
                 part_obj_targets[part_mask],
                 weight=results_weight,
             )
+            # generalized part guidance
             part_loss = F.binary_cross_entropy_with_logits(
                 logits[..., :num_part_classes][part_mask],
                 _targets[..., :num_part_classes][part_mask],
                 weight=class_weight[:num_part_classes],
             )
 
-        # TODO: check background (if all 0)
+        # check background (if all 0)
         if obj_mask.sum() > 0:
+            # part background guidance
             part_obj_loss += F.binary_cross_entropy_with_logits(
                 part_obj_logits[~obj_mask],
                 part_obj_targets[~obj_mask],
                 weight=results_weight,
             )
 
-        obj_loss += F.binary_cross_entropy_with_logits(
+        # object-level guidance (w/ background)
+        obj_loss = F.binary_cross_entropy_with_logits(
             logits[..., num_part_classes:],
             _targets[..., num_part_classes:],
             weight=class_weight[num_part_classes:],
@@ -560,7 +556,6 @@ class PartCLIPSeg(nn.Module):
                 self.attn_sep_lambda * loss_sep + self.attn_enh_lambda * loss_enh
             )
 
-            # TODO: attention loss
             loss += attn_loss
 
         if torch.isnan(loss) or torch.isinf(loss):
@@ -583,7 +578,6 @@ class PartCLIPSeg(nn.Module):
 
         smoothing = GaussianSmoothing(channels=1, kernel_size=3, sigma=0.5, dim=2).to(self.device)
 
-        # masks_resized = F.max_pool2d(masks, kernel_size=int(img_h/res), stride=int(img_h/res), padding=0)
         masks_resized = F.interpolate(masks, size=(res, res), mode='nearest')  # [b, n, r, r]
         obj_masks_resized = F.interpolate(obj_masks, size=(res, res), mode='nearest')  # [b, n, r, r]
 
@@ -655,17 +649,25 @@ class PartCLIPSeg(nn.Module):
             gts = [x["obj_part_sem_seg"].to(self.device) for x in batched_inputs]
             obj_gts = [x["sem_seg"].to(self.device) for x in batched_inputs]
 
-            targets = torch.stack([nn.functional.interpolate(
-                gt.unsqueeze(0).unsqueeze(0).float(),
-                size=(h, w),
-                mode="nearest"
-            ) for gt in gts]).long().squeeze(1).squeeze(1)  # [b,h,w]
+            targets = torch.stack(
+                [
+                    nn.functional.interpolate(
+                        gt.unsqueeze(0).unsqueeze(0).float(),
+                        size=(h, w),
+                        mode="nearest"
+                    ) for gt in gts
+                ]
+            ).long().squeeze(1).squeeze(1)  # [b,h,w]
 
-            obj_targets_ = torch.stack([nn.functional.interpolate(
-                gt.unsqueeze(0).unsqueeze(0).float(),
-                size=(h, w),
-                mode="nearest"
-            ) for gt in obj_gts]).long().squeeze(1).squeeze(1)
+            obj_targets_ = torch.stack(
+                [
+                    nn.functional.interpolate(
+                        gt.unsqueeze(0).unsqueeze(0).float(),
+                        size=(h, w),
+                        mode="nearest"
+                    ) for gt in obj_gts
+                ]
+            ).long().squeeze(1).squeeze(1)
 
             part_obj_targets = torch.zeros(
                 (bs, h, w, num_text_classes + 1),

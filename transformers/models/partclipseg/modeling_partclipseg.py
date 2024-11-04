@@ -1,35 +1,5 @@
 
 
-"""
-PartCLIPSeg
-(transformers/models/partclipseg/modeling_partclipseg.py)
-
-class PartCLIPSegOutput(ModelOutput):
-class PartCLIPSegDecoderOutput(ModelOutput):
-class PartCLIPSegImageSegmentationOutput(ModelOutput):
-class PartCLIPSegVisionEmbeddings(nn.Module):
-class PartCLIPSegTextEmbeddings(nn.Module):
-class PartCLIPSegAttention(nn.Module):
-class PartCLIPSegMLP(nn.Module):
-class PartCLIPSegEncoderLayer(nn.Module):
-class PartCLIPSegPreTrainedModel(PreTrainedModel):
-class PartCLIPSegEncoder(nn.Module):
-class PartCLIPSegTextTransformer(nn.Module):
-class PartCLIPSegTextModel(PartCLIPSegPreTrainedModel):
-class PartCLIPSegVisionTransformer(nn.Module):
-class PartCLIPSegVisionModel(PartCLIPSegPreTrainedModel):
-class PartCLIPSegModel(PartCLIPSegPreTrainedModel):
-class PartCLIPSegDecoderLayer(nn.Module):
-class PartCLIPSegDecoderConcatSelfAttentionLayer(nn.Module):
-class PartCLIPSegDecoder(PartCLIPSegPreTrainedModel):
-class Adapter(nn.Module):
-class PartCLIPSegForImageSegmentation(PartCLIPSegPreTrainedModel):
-"""
-
-
-
-
-
 
 # coding=utf-8
 # Copyright 2022 The OpenAI Team Authors and The HuggingFace Team. All rights reserved.
@@ -45,7 +15,7 @@ class PartCLIPSegForImageSegmentation(PartCLIPSegPreTrainedModel):
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch CLIPSeg model."""
+
 
 import copy
 import math
@@ -628,7 +598,9 @@ class PartCLIPSegEncoder(nn.Module):
     def __init__(self, config: PartCLIPSegConfig):
         super().__init__()
         self.config = config
-        self.layers = nn.ModuleList([PartCLIPSegEncoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [PartCLIPSegEncoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
         self.gradient_checkpointing = False
 
     def forward(
@@ -1348,9 +1320,13 @@ class PartCLIPSegDecoder(PartCLIPSegPreTrainedModel):
             )
 
         self.part_obj_mlp = nn.Sequential(
+            # 1) MLP
+            # nn.Linear(config.reduce_dim * 2, config.reduce_dim),
+            # nn.ReLU(),
+            # nn.Linear(config.reduce_dim, config.reduce_dim),
+
+            # 2) Linear
             nn.Linear(config.reduce_dim * 2, config.reduce_dim),
-            nn.ReLU(),
-            nn.Linear(config.reduce_dim, config.reduce_dim),
         )
         self.reduce_cond_embed = nn.Linear(config.projection_dim * 2, config.projection_dim)
 
@@ -1518,27 +1494,17 @@ class PartCLIPSegForImageSegmentation(PartCLIPSegPreTrainedModel):
         conditional_pixel_values: Optional[torch.Tensor] = None,
     ):
         if input_ids is not None:
-            # compute conditional embeddings from texts
-            # if len(input_ids) != batch_size:
-            #     raise ValueError("Make sure to pass as many prompt texts as there are query images")
-                # conditional_embeddings = conditional_embeddings.unsqueeze(0).repeat(batch_size, 1, 1)
-                # print(conditional_embeddings.shape)
-                # # exit()
-            # with torch.no_grad():
             conditional_embeddings = self.clip.get_text_features(
                 input_ids, attention_mask=attention_mask, position_ids=position_ids
             )
             conditional_embeddings = self.text_adapter(conditional_embeddings) * 0.0 + conditional_embeddings * 1.0
-            # conditional_embeddings = self.tunable_linear.weight[:conditional_embeddings.size(0), :] + conditional_embeddings
             conditional_embeddings = torch.cat([conditional_embeddings, self.non_object_embedding], dim=0)
-            # if len(input_ids) != batch_size:
-            #     conditional_embeddings = conditional_embeddings.unsqueeze(0).repeat(batch_size,1,1)
 
         elif conditional_pixel_values is not None:
             # compute conditional embeddings from images
             if len(conditional_pixel_values) != batch_size:
                 raise ValueError("Make sure to pass as many prompt images as there are query images")
-            # with torch.no_grad():
+
             conditional_embeddings = self.clip.get_image_features(conditional_pixel_values)
         else:
             raise ValueError(
